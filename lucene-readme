@@ -1,0 +1,703 @@
+This code is part of a Java application that demonstrates how to index files using Apache Lucene, a powerful library for text search and indexing. The IndexFiles class is the main entry point for indexing text files into a Lucene index. Here's a breakdown of the code:
+
+The program indexes text files from a specified directory into a Lucene index. The indexed data can later be searched using Lucene's search capabilities. It also supports KNN (k-nearest neighbors) vector search if a vector dictionary is provided.
+Key Components
+1. Class Declaration
+
+public class IndexFiles implements AutoCloseable
+Implements AutoCloseable to ensure resources (like the vector dictionary) are properly closed when the object is no longer needed.
+Contains logic for indexing files and optionally adding vector embeddings for KNN search.
+2. fields
+
+private final DemoEmbeddings demoEmbeddings;
+private final KnnVectorDict vectorDict;
+
+demoEmbeddings: Used to compute vector embeddings for file contents.
+vectorDict: Represents the dictionary used for KNN vector search.
+3. Constructor
+
+private IndexFiles(KnnVectorDict vectorDict) throws IOException
+Initializes the demoEmbeddings and vectorDict fields.
+If a vector dictionary is provided, it sets up the embeddings calculator (DemoEmbeddings).
+4. Main Method
+public static void main(String[] args) throws Exception
+
+Parses command-line arguments to determine:
+Index path (-index): Where the Lucene index will be stored.
+Documents path (-docs): Directory containing files to index.
+Vector dictionary path (-knn_dict): Optional dictionary for KNN vector search.
+Update mode (-update): Whether to update an existing index or create a new one.
+Validates the input paths and initializes indexing.
+5. Indexing Logic
+IndexWriter Configuration
+IndexWriterConfig iwc = new IndexWriterConfig(analyzer);
+iwc.setOpenMode(OpenMode.CREATE_OR_APPEND);
+Sets up the IndexWriter with a StandardAnalyzer for tokenizing text.
+Configures whether to create a new index or append to an existing one.
+Vector Dictionary
+KnnVectorDict.build(Paths.get(vectorDictSource), dir, KNN_DICT);
+If a vector dictionary is provided, it builds and loads the dictionary into the index.
+Indexing Files
+indexFiles.indexDocs(writer, docDir);
+Calls indexDocs to recursively index files in the specified directory.
+6. indexDocs Method
+void indexDocs(final IndexWriter writer, Path path) throws IOException
+Recursively traverses the directory using Files.walkFileTree.
+For each file, it calls indexDoc to index the file's contents.
+7. indexDoc Method
+Creates a new Lucene Document for each file.
+Adds fields to the document:
+Path (KeywordField): Stores the file path.
+Last Modified (LongField): Stores the last modified timestamp.
+Contents (TextField): Tokenizes and indexes the file's text.
+If vector embeddings are enabled:
+Computes embeddings for the file's contents.
+Adds a KnnFloatVectorField for KNN search.
+Adds or updates the document in the index based on the OpenMode.
+8. Closing Resources
+@Override
+public void close() throws IOException {
+    IOUtils.close(vectorDict);
+}
+Ensures the vector dictionary is properly closed when the IndexFiles instance is no longer needed.
+How It Works
+Command-Line Input: The user specifies paths for the index and documents, and optionally a vector dictionary.
+Index Initialization: The program sets up the index and analyzer.
+File Traversal: It recursively traverses the document directory.
+Document Creation: For each file, it creates a Lucene Document with metadata and content.
+Vector Embeddings: If enabled, it computes and adds vector embeddings for KNN search.
+Indexing: Adds or updates the document in the Lucene index.
+Completion: Outputs the number of indexed documents and closes resources.
+Key Features
+Recursive File Indexing: Handles directories and individual files.
+Metadata Indexing: Stores file paths and modification timestamps.
+Text Tokenization: Uses StandardAnalyzer for efficient text indexing.
+KNN Search Support: Adds vector embeddings for advanced search capabilities.
+Potential Improvements
+Error Handling: Improve logging for files that fail to index.
+Parallel Processing: Use multithreading for faster indexing of large directories.
+Customizable Fields: Allow users to specify additional metadata fields.
+
+The goal is to index electronic product files (e.g., JSON, CSV, or plain text files) containing product details so that users can search for products efficiently using Lucene.
+
+Steps to Adapt the Code
+1. Define Product Fields
+Electronic product files typically contain fields like:
+
+Product Name: A searchable text field.
+Description: A searchable text field.
+Category: A keyword field for filtering.
+Price: A numeric field for range queries.
+Specifications: A searchable text field.
+
+2. Modify indexDoc Method
+Update the indexDoc method to include these fields in the Lucene Document.
+
+
+void indexDoc(IndexWriter writer, Path file, long lastModified) throws IOException {
+    try (InputStream stream = Files.newInputStream(file)) {
+        // Create a new, empty document
+        Document doc = new Document();
+
+        // Add the path of the file as a field named "path"
+        doc.add(new KeywordField("path", file.toString(), Field.Store.YES));
+
+        // Add the last modified date of the file as a field named "modified"
+        doc.add(new LongField("modified", lastModified, Field.Store.NO));
+
+        // Parse the product file (assuming JSON format for this example)
+        String fileContent = new String(Files.readAllBytes(file), StandardCharsets.UTF_8);
+        Product product = parseProduct(fileContent); // Custom method to parse product details
+
+        // Add product fields to the document
+        doc.add(new TextField("productName", product.getName(), Field.Store.YES));
+        doc.add(new TextField("description", product.getDescription(), Field.Store.YES));
+        doc.add(new KeywordField("category", product.getCategory(), Field.Store.YES));
+        doc.add(new LongField("price", product.getPrice(), Field.Store.YES));
+        doc.add(new TextField("specifications", product.getSpecifications(), Field.Store.YES));
+
+        // Add vector embeddings for product descriptions (optional)
+        if (demoEmbeddings != null) {
+            float[] vector = demoEmbeddings.computeEmbedding(new BufferedReader(new InputStreamReader(stream, StandardCharsets.UTF_8)));
+            doc.add(new KnnFloatVectorField("description-vector", vector, VectorSimilarityFunction.DOT_PRODUCT));
+        }
+
+        // Add or update the document in the index
+        if (writer.getConfig().getOpenMode() == OpenMode.CREATE) {
+            writer.addDocument(doc);
+        } else {
+            writer.updateDocument(new Term("path", file.toString()), doc);
+        }
+    }
+}
+
+// Custom method to parse product details from JSON
+private Product parseProduct(String jsonContent) {
+    // Use a JSON library like Jackson or Gson to parse the content
+    // Example:
+    // ObjectMapper objectMapper = new ObjectMapper();
+    // return objectMapper.readValue(jsonContent, Product.class);
+    return new Product("Example Name", "Example Description", "Example Category", 100, "Example Specifications");
+}
+
+3. Create a Product Class
+Define a Product class to represent the product details.
+
+public class Product {
+    private String name;
+    private String description;
+    private String category;
+    private long price;
+    private String specifications;
+
+    public Product(String name, String description, String category, long price, String specifications) {
+        this.name = name;
+        this.description = description;
+        this.category = category;
+        this.price = price;
+        this.specifications = specifications;
+    }
+
+    public String getName() {
+        return name;
+    }
+
+    public String getDescription() {
+        return description;
+    }
+
+    public String getCategory() {
+        return category;
+    }
+
+    public long getPrice() {
+        return price;
+    }
+
+    public String getSpecifications() {
+        return specifications;
+    }
+}
+
+
+4. Search Use Case
+Once the product files are indexed, users can search for products using Lucene's query capabilities:
+
+Search by product name or description.
+Filter by category.
+Perform range queries on price.
+Use vector search for similar product descriptions.
+
+Example Workflow
+Input Files: JSON files containing product details.
+{
+    "name": "Smartphone X",
+    "description": "A high-end smartphone with advanced features.",
+    "category": "Electronics",
+    "price": 999,
+    "specifications": "64GB storage, 6GB RAM, 12MP camera"
+}
+
+Indexing: Run the IndexFiles program to index the files.
+
+Searching: Use Lucene's QueryParser to search for products based on user queries.
+
+Benefits
+Efficient indexing and searching of product information.
+Support for advanced search features like filtering, range queries, and vector-based similarity search.
+Scalable solution for large product catalogs.
+Let me know if you need help implementing the search functionality!
+
+
+To add parallel processing to the IndexFiles class, you can use Java's ForkJoinPool or ExecutorService to process files concurrently. This approach will improve indexing performance, especially for large directories with many files.
+
+
+Steps to Add Parallel Processing
+1. Modify indexDocs to Use Parallel Streams
+Update the indexDocs method to use Java's Files.list() with parallel streams for processing files concurrently.
+
+
+void indexDocs(final IndexWriter writer, Path path) throws IOException {
+    if (Files.isDirectory(path)) {
+        // Use parallel streams to process files concurrently
+        try (var paths = Files.list(path)) {
+            paths.parallel().forEach(file -> {
+                try {
+                    if (Files.isDirectory(file)) {
+                        indexDocs(writer, file); // Recursively index subdirectories
+                    } else {
+                        indexDoc(writer, file, Files.getLastModifiedTime(file).toMillis());
+                    }
+                } catch (IOException e) {
+                    e.printStackTrace(System.err);
+                }
+            });
+        }
+    } else {
+        indexDoc(writer, path, Files.getLastModifiedTime(path).toMillis());
+    }
+}
+
+2. Use ForkJoinPool for Recursive File Traversal
+For more control over parallelism, replace Files.walkFileTree with a ForkJoinPool. This is useful for deeply nested directories.
+
+
+import java.util.concurrent.ForkJoinPool;
+import java.util.concurrent.RecursiveAction;
+
+// filepath: c:\Users\ac17599\Hartford\lucene\lucene-main\lucene-main\lucene\demo\src\java\org\apache\lucene\demo\IndexFiles.java
+void indexDocs(final IndexWriter writer, Path path) throws IOException {
+    ForkJoinPool pool = new ForkJoinPool();
+    pool.invoke(new FileIndexer(writer, path));
+}
+
+private class FileIndexer extends RecursiveAction {
+    private final IndexWriter writer;
+    private final Path path;
+
+    FileIndexer(IndexWriter writer, Path path) {
+        this.writer = writer;
+        this.path = path;
+    }
+
+    @Override
+    protected void compute() {
+        try {
+            if (Files.isDirectory(path)) {
+                // Fork tasks for subdirectories
+                Files.list(path)
+                    .map(subPath -> new FileIndexer(writer, subPath))
+                    .forEach(FileIndexer::fork);
+            } else {
+                // Index individual file
+                indexDoc(writer, path, Files.getLastModifiedTime(path).toMillis());
+            }
+        } catch (IOException e) {
+            e.printStackTrace(System.err);
+        }
+    }
+}
+
+. Use ExecutorService for Thread Pool Management
+Alternatively, use ExecutorService to manage a thread pool for concurrent file indexing.
+
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+
+// filepath: c:\Users\ac17599\Hartford\lucene\lucene-main\lucene-main\lucene\demo\src\java\org\apache\lucene\demo\IndexFiles.java
+void indexDocs(final IndexWriter writer, Path path) throws IOException {
+    ExecutorService executor = Executors.newFixedThreadPool(Runtime.getRuntime().availableProcessors());
+
+    if (Files.isDirectory(path)) {
+        try (var paths = Files.list(path)) {
+            paths.forEach(file -> executor.submit(() -> {
+                try {
+                    if (Files.isDirectory(file)) {
+                        indexDocs(writer, file); // Recursively index subdirectories
+                    } else {
+                        indexDoc(writer, file, Files.getLastModifiedTime(file).toMillis());
+                    }
+                } catch (IOException e) {
+                    e.printStackTrace(System.err);
+                }
+            }));
+        }
+    } else {
+        executor.submit(() -> {
+            try {
+                indexDoc(writer, path, Files.getLastModifiedTime(path).toMillis());
+            } catch (IOException e) {
+                e.printStackTrace(System.err);
+            }
+        });
+    }
+
+    executor.shutdown();
+    while (!executor.isTerminated()) {
+        // Wait for all tasks to complete
+    }
+}
+
+
+Considerations
+Thread Safety: Ensure that shared resources (e.g., IndexWriter) are thread-safe. Lucene's IndexWriter is thread-safe, so it can handle concurrent document additions.
+Error Handling: Log errors for files that fail to index without interrupting the entire process.
+Performance Tuning: Adjust the thread pool size (ForkJoinPool or ExecutorService) based on the number of CPU cores and the workload.
+
+
+Benefits
+Faster indexing for large directories.
+Efficient utilization of CPU cores.
+Scalable solution for indexing large datasets.
+
+
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+
+// filepath: c:\Users\ac17599\Hartford\lucene\lucene-main\lucene-main\lucene\demo\src\java\org\apache\lucene\demo\IndexFiles.java
+void indexDocs(final IndexWriter writer, Path path) throws IOException {
+    // Create a virtual thread executor
+    try (ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor()) {
+        if (Files.isDirectory(path)) {
+            // Process files in the directory
+            try (var paths = Files.list(path)) {
+                paths.forEach(file -> executor.submit(() -> {
+                    try {
+                        if (Files.isDirectory(file)) {
+                            indexDocs(writer, file); // Recursively index subdirectories
+                        } else {
+                            indexDoc(writer, file, Files.getLastModifiedTime(file).toMillis());
+                        }
+                    } catch (IOException e) {
+                        e.printStackTrace(System.err);
+                    }
+                }));
+            }
+        } else {
+            // Process a single file
+            executor.submit(() -> {
+                try {
+                    indexDoc(writer, path, Files.getLastModifiedTime(path).toMillis());
+                } catch (IOException e) {
+                    e.printStackTrace(System.err);
+                }
+            });
+        }
+    }
+}
+
+
+How It Works
+Virtual Thread Executor:
+
+Executors.newVirtualThreadPerTaskExecutor() creates an executor that uses virtual threads for each task.
+Virtual threads are lightweight and ideal for I/O-bound tasks like file indexing.
+Task Submission:
+
+Each file or directory is processed as a separate task submitted to the executor.
+Subdirectories are processed recursively.
+Automatic Resource Management:
+
+The try-with-resources block ensures the executor is properly closed after all tasks are completed.
+
+
+Benefits of Virtual Threads
+Lightweight Concurrency:
+
+Virtual threads are much lighter than traditional threads, allowing you to handle thousands of concurrent tasks efficiently.
+Simplified Code:
+
+Virtual threads eliminate the need for complex thread pool management.
+Scalability:
+
+Ideal for I/O-heavy workloads like file indexing, where threads spend most of their time waiting for I/O operations.
+Considerations
+Java Version:
+
+Ensure you are using Java 19 or later, with virtual threads enabled.
+Virtual threads are stabilized in Java 21.
+Error Handling:
+
+Log errors for files that fail to index without interrupting the entire process.
+Performance:
+
+Virtual threads are optimized for I/O-bound tasks but may not provide significant benefits for CPU-bound tasks.
+
+
+Usage
+Run the program as usual, and the virtual threads will handle file indexing efficiently. This approach is particularly useful for indexing large directories with many files.
+
+Let me know if you need further clarification or assistance!
+
+To create a sample vector dictionary for product descriptions, you can use a pre-trained embedding model (e.g., Word2Vec, GloVe, or BERT) to generate vector embeddings for product descriptions. The vector dictionary is essentially a mapping of words or phrases to their corresponding vector representations.
+
+
+
+Steps to Create a Sample Vector Dictionary
+1. Choose an Embedding Model
+Use a pre-trained model like:
+
+Word2Vec: Generates word embeddings based on context.
+GloVe: Generates word embeddings based on co-occurrence statistics.
+BERT: Generates contextual embeddings for sentences or phrases.
+
+2. Generate Embeddings for Product Descriptions
+For simplicity, let's assume you are using Word2Vec or GloVe. You can generate embeddings for common product-related terms and save them in a dictionary format.
+
+
+
+3. Sample Vector Dictionary
+Below is an example of a vector dictionary in JSON format. Each word or phrase is mapped to a vector of floating-point numbers.
+
+{
+  "smartphone": [0.12, 0.34, 0.56, 0.78, 0.90],
+  "camera": [0.23, 0.45, 0.67, 0.89, 0.12],
+  "electronics": [0.34, 0.56, 0.78, 0.90, 0.23],
+  "high-end": [0.45, 0.67, 0.89, 0.12, 0.34],
+  "features": [0.56, 0.78, 0.90, 0.23, 0.45],
+  "storage": [0.67, 0.89, 0.12, 0.34, 0.56],
+  "RAM": [0.78, 0.90, 0.23, 0.45, 0.67],
+  "12MP": [0.89, 0.12, 0.34, 0.56, 0.78]
+}
+
+
+Save the Dictionary
+Save the dictionary as a JSON file (e.g., knn-dict.json) or in a binary format compatible with Lucene's KnnVectorDict.
+
+5. Load the Dictionary in Lucene
+Use the KnnVectorDict class to load the dictionary into Lucene for indexing and searching.
+KnnVectorDict.build(Paths.get("path/to/knn-dict.json"), dir, KNN_DICT);
+KnnVectorDict vectorDictInstance = new KnnVectorDict(dir, KNN_DICT);
+
+Using the Dictionary
+Indexing: Compute embeddings for product descriptions using the dictionary and add them to the Lucene index.
+Searching: Use KnnVectorQuery to find products with similar descriptions based on vector similarity.
+Example Workflow
+Input Description: "A high-end smartphone with advanced features."
+Embedding: Compute the vector for the description using the dictionary.
+Indexing: Add the vector to the Lucene document.
+Query: Search for similar descriptions using vector similarity.
+Let me know if you need help generating embeddings programmatically or integrating them into Lucene!
+
+
+Data Format for BERT
+The input data for BERT should be plain text, ideally structured as individual product descriptions. Each description can be a single sentence or a paragraph. For example:
+
+Example Input Data
+
+
+Smartphone X: A high-end smartphone with advanced features like 64GB storage, 6GB RAM, and a 12MP camera.
+Laptop Y: A powerful laptop with a 15-inch display, Intel i7 processor, and 16GB RAM.
+Wireless Earbuds Z: Compact and lightweight earbuds with noise cancellation and 20-hour battery life.
+
+
+Steps to Create a Vector Dictionary Using BERT
+1. Prepare the Input Data
+Collect product descriptions in plain text format.
+Ensure each description is concise and meaningful.
+Example Input File (products.txt)
+
+
+Smartphone X: A high-end smartphone with advanced features like 64GB storage, 6GB RAM, and a 12MP camera.
+Laptop Y: A powerful laptop with a 15-inch display, Intel i7 processor, and 16GB RAM.
+Wireless Earbuds Z: Compact and lightweight earbuds with noise cancellation and 20-hour battery life.
+
+
+2. Use a Pre-trained BERT Model
+You can use a pre-trained BERT model (e.g., bert-base-uncased) to generate embeddings for each product description. Libraries like Hugging Face Transformers make this process straightforward.
+
+
+3. Generate Embeddings
+Use Python and the Hugging Face library to process the descriptions and generate embeddings.
+
+
+from transformers import AutoTokenizer, AutoModel
+import torch
+import json
+
+# Load pre-trained BERT model and tokenizer
+model_name = "bert-base-uncased"
+tokenizer = AutoTokenizer.from_pretrained(model_name)
+model = AutoModel.from_pretrained(model_name)
+
+# Input product descriptions
+product_descriptions = [
+    "Smartphone X: A high-end smartphone with advanced features like 64GB storage, 6GB RAM, and a 12MP camera.",
+    "Laptop Y: A powerful laptop with a 15-inch display, Intel i7 processor, and 16GB RAM.",
+    "Wireless Earbuds Z: Compact and lightweight earbuds with noise cancellation and 20-hour battery life."
+]
+
+# Generate embeddings
+vector_dict = {}
+for description in product_descriptions:
+    inputs = tokenizer(description, return_tensors="pt", truncation=True, padding=True)
+    with torch.no_grad():
+        outputs = model(**inputs)
+        # Use the [CLS] token's embedding as the sentence embedding
+        embedding = outputs.last_hidden_state[:, 0, :].squeeze().tolist()
+        vector_dict[description.split(":")[0]] = embedding  # Use product name as key
+
+# Save the vector dictionary to a JSON file
+with open("knn-dict.json", "w") as f:
+    json.dump(vector_dict, f)
+
+
+4. Output Format
+The output will be a JSON file where each product name is mapped to its vector embedding.
+
+Example Output (knn-dict.json)
+
+{
+    "Smartphone X": [0.123, 0.456, 0.789, ...],
+    "Laptop Y": [0.234, 0.567, 0.890, ...],
+    "Wireless Earbuds Z": [0.345, 0.678, 0.901, ...]
+}
+
+5. Integrate with Lucene
+Use the generated vector dictionary in Lucene's KnnVectorDict for indexing and searching.
+
+
+KnnVectorDict.build(Paths.get("path/to/knn-dict.json"), dir, KNN_DICT);
+KnnVectorDict vectorDictInstance = new KnnVectorDict(dir, KNN_DICT);
+
+
+Considerations
+Truncation: Ensure descriptions are within BERT's maximum token limit (512 tokens).
+Embedding Size: BERT embeddings are typically 768-dimensional for bert-base models.
+Preprocessing: Clean and normalize descriptions (e.g., remove special characters) for better embeddings
+
+
+Benefits
+Semantic Search: Enables similarity-based search for product descriptions.
+Scalability: Supports large product catalogs with efficient vector-based indexing.
+Let me know if you need help implementing this or integrating it with Lucene!
+
+
+is part of the SearchFiles class, which is a command-line application for searching a Lucene index. Here's how this specific line fits into the broader context:
+
+
+Purpose
+This line defines a variable named field and initializes it with the value "contents". The field variable represents the name of the field in the Lucene index that will be searched. In Lucene, an index is composed of documents, and each document can have multiple fields (e.g., path, modified, contents).
+
+
+How It Works
+Field Name in Lucene:
+
+When indexing files (as seen in IndexFiles.java), the file contents are stored in a field named "contents". This field is tokenized and indexed, making it searchable.
+In SearchFiles.java, the field variable specifies which field in the index should be searched. By default, it is set to "contents".
+Command-Line Argument Override:
+
+Later in the code, the field variable can be overridden by the -field command-line argument:
+
+
+
+
+case "-field":
+  field = args[++i];
+  break;
+
+
+This allows the user to specify a different field to search, such as "path" or "modified", depending on their needs.
+Usage in Search:
+
+The field variable is passed to Lucene's query-building logic to specify which field to search. For example:
+
+
+Query query = new QueryParser(field, analyzer).parse(queryString);
+
+Here, the field variable tells Lucene to search within the "contents" field of the indexed documents.
+
+Why It Matters
+Flexibility: By defining the field as a variable, the program can dynamically adjust which field to search based on user input.
+Default Behavior: If no -field argument is provided, the program defaults to searching the "contents" field, which is typically where the main text of the files is indexed.
+
+
+1. Ensure Fields Are Indexed
+Make sure the description and specifications fields are indexed in the Lucene index. This is typically done in the IndexFiles class during indexing.
+
+
+doc.add(new TextField("description", product.getDescription(), Field.Store.YES));
+doc.add(new TextField("specifications", product.getSpecifications(), Field.Store.YES));
+
+Modify SearchFiles to Search Multiple Fields
+Update the SearchFiles class to allow searching across multiple fields (description and specifications) using a BooleanQuery.
+
+
+Updated Code in SearchFiles.java
+Modify the query-building logic in the main method to include both fields.
+
+
+QueryParser descriptionParser = new QueryParser("description", analyzer);
+QueryParser specificationsParser = new QueryParser("specifications", analyzer);
+
+Query descriptionQuery = descriptionParser.parse(line);
+Query specificationsQuery = specificationsParser.parse(line);
+
+BooleanQuery.Builder builder = new BooleanQuery.Builder();
+builder.add(descriptionQuery, BooleanClause.Occur.SHOULD);
+builder.add(specificationsQuery, BooleanClause.Occur.SHOULD);
+
+Query query = builder.build();
+
+if (knnVectors > 0) {
+    query = addSemanticQuery(query, vectorDict, knnVectors);
+}
+System.out.println("Searching for: " + query.toString());
+
+
+
+3. Add Semantic Search for Descriptions
+If vector embeddings are enabled (via -knn_vector), use the addSemanticQuery method to enhance the search with semantic similarity.
+
+
+private static Query addSemanticQuery(Query query, KnnVectorDict vectorDict, int k)
+    throws IOException {
+    StringBuilder semanticQueryText = new StringBuilder();
+    QueryFieldTermExtractor termExtractor = new QueryFieldTermExtractor("description");
+    query.visit(termExtractor);
+    for (String term : termExtractor.terms) {
+        semanticQueryText.append(term).append(' ');
+    }
+    if (semanticQueryText.length() > 0) {
+        KnnFloatVectorQuery knnQuery =
+            new KnnFloatVectorQuery(
+                "description-vector",
+                new DemoEmbeddings(vectorDict).computeEmbedding(semanticQueryText.toString()),
+                k);
+        BooleanQuery.Builder builder = new BooleanQuery.Builder();
+        builder.add(query, BooleanClause.Occur.SHOULD);
+        builder.add(knnQuery, BooleanClause.Occur.SHOULD);
+        return builder.build();
+    }
+    return query;
+}
+
+
+4. Run the SearchFiles Program
+Use the following command to search for products based on their description and specifications:
+
+
+java org.apache.lucene.demo.SearchFiles -index index -query "64GB storage 6GB RAM high-end smartphone"
+
+
+If vector embeddings are enabled, add the -knn_vector argument:
+
+
+java org.apache.lucene.demo.SearchFiles -index index -query "64GB storage 6GB RAM high-end smartphone" -knn_vector 10
+
+
+How It Works
+Text-Based Search:
+
+The program searches the description and specifications fields using a BooleanQuery.
+Results are ranked based on relevance to the query terms.
+Semantic Search (Optional):
+
+If vector embeddings are enabled, the program computes a vector for the query and performs a KNN search to find semantically similar descriptions.
+Paging Results:
+
+The doPagingSearch method displays results in pages, allowing users to navigate through them interactively.
+Example Output
+For the query "64GB storage 6GB RAM high-end smartphone", the program might return:
+
+Benefits
+Flexible Search: Supports keyword-based and semantic search.
+Multi-Field Query: Searches across both description and specifications.
+Interactive Results: Allows users to navigate through search results.
+Let me know if you need further clarification or assistance!
+
+
+1. Smartphone X
+   Title: High-end smartphone with advanced features
+2. Laptop Y
+   Title: Powerful laptop with similar specifications
+
+
+Benefits
+Flexible Search: Supports keyword-based and semantic search.
+Multi-Field Query: Searches across both description and specifications.
+Interactive Results: Allows users to navigate through search results.
+
+
+
+
